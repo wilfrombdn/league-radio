@@ -333,7 +333,16 @@ class MainActivity : Activity() {
         return box
     }
 
+    private var tab = 0
+
+    /** Back from Schedule returns to Radio; back from Radio leaves the app (audio keeps playing in the service). */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (tab != 0) showTab(0) else super.onBackPressed()
+    }
+
     private fun showTab(i: Int) {
+        tab = i
         radioPane.visibility = if (i == 0) View.VISIBLE else View.GONE
         schedPane.visibility = if (i == 1) View.VISIBLE else View.GONE
         tabCells.forEachIndexed { k, t -> t.setTextColor(if (k == i) white else dim) }
