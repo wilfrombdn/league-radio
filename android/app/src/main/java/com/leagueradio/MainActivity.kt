@@ -68,7 +68,6 @@ class MainActivity : Activity() {
     private lateinit var nextTv: TextView
     private lateinit var nextTime: TextView
     private lateinit var segHolder: LinearLayout
-    private lateinit var yearHolder: LinearLayout
     private lateinit var countTv: TextView
     private lateinit var tzTv: TextView
     private lateinit var dataTv: TextView
@@ -482,11 +481,8 @@ class MainActivity : Activity() {
         head.addView(r1, lp(-1, -2))
 
         val r2 = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val ys = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-        yearHolder = LinearLayout(this)
-        ys.addView(yearHolder)
         tzTv = tv("", 11f, faint).apply { gravity = Gravity.END }
-        r2.addView(ys, lp(-2, -2))
+        r2.addView(tv("$year Schedule", 15f, white, true), lp(-2, -2))
         r2.addView(tzTv, lp(0, -2, 1f))
         head.addView(r2, lp(-1, -2).apply { topMargin = dp(10) })
         p.addView(head, lp(-1, -2))
@@ -508,12 +504,8 @@ class MainActivity : Activity() {
         val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
         val tzName = ZonedDateTime.now(zone).format(DateTimeFormatter.ofPattern("zzz", Locale.getDefault()))
 
-        val years = (matches.map { it.start.atZone(zone).year.toString() } + Year.now().value.toString())
-            .distinct().sorted()
         segHolder.removeAllViews()
         segHolder.addView(segmented(listOf("Upcoming", "Results", "All"), view) { view = it; renderSchedule() })
-        yearHolder.removeAllViews()
-        yearHolder.addView(segmented(years, years.indexOf(year).coerceAtLeast(0)) { year = years[it]; renderSchedule() })
         tzTv.text = "Local time  $tzName"
 
         val inYear = matches.filter { it.start.atZone(zone).year.toString() == year }

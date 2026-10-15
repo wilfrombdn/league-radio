@@ -544,8 +544,7 @@ class App:
         row2 = tk.Frame(f, bg=BG)
         row2.pack(fill="x", pady=(8, 0))
         self.year = tk.StringVar(value=str(datetime.now().year))
-        self.year_seg = Seg(row2, self.year, [self.year.get()])
-        self.year_seg.pack(side="left")
+        tk.Label(row2, text=f"{self.year.get()} Schedule", bg=BG, fg=WHITE, font=(FONT, 11, "bold")).pack(side="left")
         self.tzlabel = tk.StringVar()
         tk.Label(row2, textvariable=self.tzlabel, bg=BG, fg=DIM, font=(FONT, 8)).pack(side="right")
         for v in (self.year, self.view):
@@ -574,8 +573,7 @@ class App:
         t.tag_configure("next", background=PANEL2)
 
     def refresh_filters(self):
-        years = sorted({e["t"][:4] for e in self.events} | {str(datetime.now().year)})
-        self.year_seg.set_options(years)
+        pass  # the year is a fixed title, not an option
 
     # ---- look ----
     def set_hover(self, h):
