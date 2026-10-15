@@ -508,9 +508,10 @@ class App:
                 t.insert("end", f"\t{aw} – {bw}\t", base + ("score",))
                 t.insert("end", e["b"], base + (tb,))
             else:
-                t.insert("end", "\t" + e["a"], base + ("name",))
+                nm = "vs" if e["a"] == "TBD" and e["b"] == "TBD" else "name"  # undecided teams are muted
+                t.insert("end", "\t" + e["a"], base + (nm,))
                 t.insert("end", "\tvs\t", base + ("vs",))
-                t.insert("end", e["b"], base + ("name",))
+                t.insert("end", e["b"], base + (nm,))
             t.insert("end", f"\tBo{e['bo']}", base + ("meta",))
             t.insert("end", ("   ● LIVE" if live else "") + "\n", base + (("live",) if live else ("meta",)))
         if not rows:
@@ -545,6 +546,9 @@ class App:
 
     def tick(self):  # keep countdown fresh and follow time-zone changes
         self.render() if int(time.time()) % 600 < 30 else self.update_next()
+        if time.time() - getattr(self, "last_fetch", 0) > 600:  # new pairings/results while the app stays open
+            self.last_fetch = time.time()
+            threading.Thread(target=self.refresh_schedule, daemon=True).start()
         self.root.after(30000, self.tick)
 
     # ---- UI helpers ----

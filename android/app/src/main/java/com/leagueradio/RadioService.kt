@@ -1,9 +1,11 @@
 package com.leagueradio
 
 import android.content.Intent
+import android.net.TrafficStats
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -28,9 +30,31 @@ class RadioService : MediaSessionService() {
     private val io = Executors.newSingleThreadExecutor()
     private var channel: String? = null
     private var gen = 0
+    private var lastRx = -1L
+    private val ticker = Handler(Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            val rx = TrafficStats.getUidRxBytes(Process.myUid())
+            if (rx >= 0) {
+                if (channel != null && lastRx in 0..rx) addUsage(rx - lastRx)
+                lastRx = rx
+            }
+            ticker.postDelayed(this, 3000)
+        }
+    }
+
+    /** Counts the bytes this app downloads while a channel is active (session + today). */
+    private fun addUsage(delta: Long) {
+        val p = getSharedPreferences("data", MODE_PRIVATE)
+        val day = java.time.LocalDate.now().toString()
+        val today = if (p.getString("day", "") == day) p.getLong("today", 0) else 0L
+        p.edit().putString("day", day).putLong("today", today + delta)
+            .putLong("session", p.getLong("session", 0) + delta).apply()
+    }
 
     override fun onCreate() {
         super.onCreate()
+        ticker.post(tick)
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(), true)
@@ -68,6 +92,7 @@ class RadioService : MediaSessionService() {
 
     private fun start(ch: String) {
         channel = ch
+        getSharedPreferences("data", MODE_PRIVATE).edit().putLong("session", 0).apply()
         gen++
         main.removeCallbacksAndMessages(null)
         resolve()
@@ -120,6 +145,7 @@ class RadioService : MediaSessionService() {
         session?.release()
         player.release()
         io.shutdownNow()
+        ticker.removeCallbacksAndMessages(null)
         main.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

@@ -68,6 +68,11 @@ class MainActivity : Activity() {
     private lateinit var yearHolder: LinearLayout
     private lateinit var countTv: TextView
     private lateinit var tzTv: TextView
+    private lateinit var dataTv: TextView
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+    private val dataTick = object : Runnable {
+        override fun run() { showData(); ui.postDelayed(this, 2000) }
+    }
     private lateinit var schedList: LinearLayout
 
     private var matches: List<Match> = emptyList()
@@ -91,9 +96,6 @@ class MainActivity : Activity() {
         connect()
         matches = Schedule.stored(this)
         renderSchedule()
-        io.execute {
-            Schedule.refresh(this)?.let { matches = it; runOnUiThread { renderSchedule() } }
-        }
     }
 
     override fun onStart() {
@@ -104,6 +106,36 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         renderSchedule()
+        maybeRefresh()
+        ui.post(dataTick)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacksAndMessages(null)
+        super.onPause()
+    }
+
+    /** Refresh at most every 10 min on Wi-Fi, every 60 min on a metered (mobile) connection. */
+    private fun maybeRefresh() {
+        val p = getSharedPreferences("sched", MODE_PRIVATE)
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val gap = if (cm.isActiveNetworkMetered) 60L else 10L
+        val last = p.getLong("lastRefresh", 0)
+        if (System.currentTimeMillis() - last < gap * 60_000) return
+        p.edit().putLong("lastRefresh", System.currentTimeMillis()).apply()
+        io.execute { Schedule.refresh(this)?.let { matches = it; runOnUiThread { renderSchedule() } } }
+    }
+
+    private fun fmtBytes(b: Long): String = when {
+        b >= 1_000_000_000 -> String.format(Locale.US, "%.2f GB", b / 1e9)
+        else -> String.format(Locale.US, "%.1f MB", b / 1e6)
+    }
+
+    private fun showData() {
+        val p = getSharedPreferences("data", MODE_PRIVATE)
+        val today = if (p.getString("day", "") == java.time.LocalDate.now().toString()) p.getLong("today", 0) else 0L
+        dataTv.text = "Data  " + fmtBytes(p.getLong("session", 0)) + " this session  \u00B7  " +
+            fmtBytes(today) + " today"
     }
 
     override fun onStop() {
@@ -280,8 +312,9 @@ class MainActivity : Activity() {
         val p = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(24), dp(28), dp(24), dp(20))
+            setPadding(dp(24), dp(12), dp(24), dp(20))
         }
+        p.addView(View(this), lp(-1, 0, 1f))
         p.addView(tv("LEAGUE RADIO", 26f, white, true, 0.06f))
         p.addView(tv("Audio-only  ·  low data", 13f, dim).apply { setPadding(0, dp(6), 0, 0) })
 
@@ -298,6 +331,8 @@ class MainActivity : Activity() {
         srow.addView(statusTv, lp(-2, -2))
         p.addView(srow, lp(-2, dp(24)).apply { topMargin = dp(18) })
         setDot(faint)
+        dataTv = tv("", 12f, dim).apply { gravity = Gravity.CENTER }
+        p.addView(dataTv, lp(-2, -2).apply { topMargin = dp(8) })
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -424,19 +459,23 @@ class MainActivity : Activity() {
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             }
             row.addView(tv(z.format(timeFmt), 12f, dim), lp(dp(66), -2))
+            val tbd = m.a == "TBD" && m.b == "TBD"
             val scored = m.done && m.aw >= 0
             val aWon = m.aw > m.bw
-            row.addView(tv(m.a, 15f, if (!scored || aWon) white else dim, !scored || aWon).apply {
+            row.addView(tv(m.a, 15f, if (tbd) faint else if (!scored || aWon) white else dim, !tbd && (!scored || aWon)).apply {
                 gravity = Gravity.END
             }, lp(0, -2, 1f))
             row.addView(tv(if (scored) "${m.aw} – ${m.bw}" else "vs", if (scored) 15f else 12f,
                 if (scored) white else faint, scored).apply { gravity = Gravity.CENTER }, lp(dp(58), -2))
-            row.addView(tv(m.b, 15f, if (!scored || !aWon) white else dim, !scored || !aWon), lp(0, -2, 1f))
+            row.addView(tv(m.b, 15f, if (tbd) faint else if (!scored || !aWon) white else dim, !tbd && (!scored || !aWon)), lp(0, -2, 1f))
             row.addView(tv(if (live) "LIVE" else "Bo${m.bestOf}", 11f, if (live) white else faint, live).apply {
                 gravity = Gravity.END
             }, lp(dp(38), -2))
             schedList.addView(row, lp(-1, -2))
         }
+        if (rows.any { it.a == "TBD" && it.b == "TBD" }) schedList.addView(
+            tv("TBD = teams not decided yet. Swiss pairings are set after each round and knockout teams after " +
+                "Swiss ends. Names fill in automatically.", 11f, faint).apply { setPadding(dp(12), dp(20), dp(12), 0) })
         if (rows.isEmpty()) schedList.addView(tv("Nothing to show yet.", 14f, dim).apply {
             setPadding(dp(12), dp(28), 0, 0)
         })
