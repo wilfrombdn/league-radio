@@ -36,6 +36,22 @@ object Channels {
     private const val LIVE = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
     private const val KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z" // public key used by lolesports.com
 
+    /** Which of these Twitch channels are streaming right now (one small request, no video); null on failure. */
+    fun liveSet(logins: List<String>): Set<String>? = try {
+        val q = "query{users(logins:[" + logins.joinToString(",") { "\"$it\"" } + "]){login stream{id}}}"
+        val c = URL("https://gql.twitch.tv/gql").openConnection() as HttpURLConnection
+        c.connectTimeout = 8000
+        c.readTimeout = 8000
+        c.requestMethod = "POST"
+        c.doOutput = true
+        c.setRequestProperty("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko") // Twitch web player public id
+        c.outputStream.use { it.write(JSONObject().put("query", q).toString().toByteArray()) }
+        val users = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+            .getJSONObject("data").getJSONArray("users")
+        (0 until users.length()).mapNotNull { users.optJSONObject(it) }
+            .filter { !it.isNull("stream") }.map { it.getString("login").lowercase() }.toSet()
+    } catch (e: Exception) { null }
+
     /** Official channels found by discovery first, then the built-in list. */
     fun all(ctx: Context): List<Chan> {
         val found = ArrayList<Chan>()

@@ -202,6 +202,36 @@ def first_live():
     return None
 
 
+GREEN, RED = "#22C55E", "#FF4D4D"
+GQL = "https://gql.twitch.tv/gql"
+TWITCH_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # Twitch web player public id
+
+
+def live_channels(logins):
+    """Which of these Twitch channels are streaming right now (one small request, no video)."""
+    try:
+        q = "query{users(logins:[%s]){login stream{id}}}" % ",".join(json.dumps(l) for l in logins)
+        req = urllib.request.Request(GQL, json.dumps({"query": q}).encode(), {"Client-ID": TWITCH_ID})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            users = json.load(r)["data"]["users"]
+        return {u["login"].lower() for u in users if u and u.get("stream")}
+    except Exception:
+        return None
+
+
+def match_status(e, now):
+    """None (not started / finished), 'live' (API says in progress) or 'guess' (start time has
+    passed but the API has not flipped yet; assumes a typical running time for the series length)."""
+    if e.get("state") == "completed":
+        return None
+    age = now - datetime.fromisoformat(e["t"].replace("Z", "+00:00")).timestamp()
+    if age < 0:
+        return None
+    if e.get("state") == "inProgress" and age < 12 * 3600:
+        return "live"
+    return "guess" if age < (e["bo"] * 50 + 40) * 60 else None
+
+
 def channel_login(text):
     """Dropdown label or typed name -> twitch login ('auto' means pick the first live official one)."""
     text = text.strip()
@@ -273,6 +303,18 @@ def play_button_img(size, playing, hover, pressed=False):
         d.polygon([(x0, c - h), (x0, c + h), (x0 + w * 1.9, c)], fill=WHITE)
         d.line([(x0, c - h), (x0, c + h), (x0 + w * 1.9, c), (x0, c - h)], fill=WHITE, width=SS * 2, joint="curve")
     return _finish(im, (size, size))
+
+
+def glow_img(size):
+    """Green dot with a soft halo."""
+    from PIL import Image, ImageDraw, ImageFilter
+    big = size * SS
+    halo = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    c, r = big / 2, big * 0.3
+    ImageDraw.Draw(halo).ellipse((c - r, c - r, c + r, c + r), fill=GREEN)
+    halo = halo.filter(ImageFilter.GaussianBlur(big * 0.1))
+    ImageDraw.Draw(halo).ellipse((c - r * 0.6, c - r * 0.6, c + r * 0.6, c + r * 0.6), fill="#4ADE80")
+    return _finish(halo, (size, size))
 
 
 def rounded_img(w, h, fill, outline, radius=14):
@@ -358,6 +400,7 @@ class App:
         self.events = []
         self.state = "stopped"  # stopped | busy | playing | wait
         self.hover = False
+        self.live, self.last_live = set(), 0
 
         root.title("League Radio")
         root.geometry(f"{self.W}x580")
@@ -379,6 +422,7 @@ class App:
         root.option_add("*TCombobox*Listbox.selectForeground", WHITE)
         root.option_add("*TCombobox*Listbox.font", (FONT, 9))
         self.imgs = {(p, h): play_button_img(112, p, h) for p in (False, True) for h in (False, True)}
+        self.glow = glow_img(22)
         self.imgs_pressed = {p: play_button_img(112, p, True, True) for p in (False, True)}
 
         # ---- tab bar: two equal cells side by side, fixed size, underline marks the active one ----
@@ -465,11 +509,15 @@ class App:
         self.channel = tk.StringVar(value=AUTO_LABEL if saved in ("lolesports", "") else saved)
         r1 = tk.Frame(foot, bg=BG)
         r1.pack(fill="x", pady=(0, 10))
-        tk.Label(r1, text="STREAM", bg=BG, fg=DIM, font=(FONT, 8, "bold")).pack(side="left", padx=(0, 10))
+        tk.Label(r1, text="STREAM", bg=BG, fg=DIM, font=(FONT, 8, "bold")).pack(side="left", padx=(0, 6))
+        self.live_cv = tk.Canvas(r1, width=22, height=22, bg=BG, highlightthickness=0)
+        self.live_cv.pack(side="left", padx=(0, 4))
+        self.live_item = self.live_cv.create_image(11, 11)
         self.combo = ttk.Combobox(r1, textvariable=self.channel, values=self.channel_labels(),
                                   style="Dark.TCombobox", font=(FONT, 9))
         self.combo.pack(side="left", fill="x", expand=True, ipady=3)
-        self.combo.configure(postcommand=lambda: self.combo.configure(values=self.channel_labels()))
+        self.combo.configure(postcommand=self.open_dropdown)
+        self.channel.trace_add("write", lambda *a: self.show_live_dot())
         r2 = tk.Frame(foot, bg=BG)
         r2.pack(fill="x")
         foot = r2
@@ -521,7 +569,8 @@ class App:
         t.tag_configure("name", foreground=TEXT, font=(FONT, 9, "bold"))
         t.tag_configure("score", foreground=WHITE, font=(FONT, 9, "bold"))
         t.tag_configure("meta", foreground=FAINT, font=(FONT, 8))
-        t.tag_configure("live", foreground=WHITE, font=(FONT, 9, "bold"))
+        t.tag_configure("live", foreground=RED, font=(FONT, 9, "bold"))
+        t.tag_configure("guess", foreground="#B05050", font=(FONT, 9, "bold"))
         t.tag_configure("next", background=PANEL2)
 
     def refresh_filters(self):
@@ -584,12 +633,13 @@ class App:
             dt = self.local(e["t"])
             ts = dt.timestamp()
             finished = e.get("state") == "completed"
-            live = not finished and now - 3 * 3600 < ts <= now
+            status = match_status(e, now)
+            live = status is not None
             if dt.date() != last_day:
                 last_day = dt.date()
                 t.insert("end", dt.strftime("%A, %b ") + str(dt.day), "day")
                 t.insert("end", "   " + " / ".join(stages[last_day]) + "\n", ("day", "daystage"))
-            is_next = nxt_mark is None and not finished and ts > now - 3 * 3600
+            is_next = nxt_mark is None and not finished and (ts > now or live)
             base = ("row", "next") if is_next else ("row",)
             if is_next:
                 nxt_mark = t.index("end-1c")
@@ -607,7 +657,8 @@ class App:
                 t.insert("end", "\tvs\t", base + ("vs",))
                 t.insert("end", e["b"], base + (nm,))
             t.insert("end", f"\tBo{e['bo']}", base + ("meta",))
-            t.insert("end", ("   ● LIVE" if live else "") + "\n", base + (("live",) if live else ("meta",)))
+            t.insert("end", ("   ● LIVE" if status == "live" else "   ● LIVE?" if live else "") + "\n",
+                     base + ((("live",) if status == "live" else ("guess",)) if live else ("meta",)))
         if not rows:
             t.insert("end", "\nNothing to show yet.\n", "daystage")
         t.configure(state="disabled")
@@ -623,9 +674,11 @@ class App:
         c = self.card
         for e in self.events:
             dt = self.local(e["t"])
-            if e.get("state") != "completed" and dt.timestamp() > now - 3 * 3600:
-                live = dt.timestamp() <= now
-                c.itemconfigure(self.next_tag, text="● LIVE NOW" if live else "NEXT MATCH", fill=WHITE if live else DIM)
+            status = match_status(e, now)
+            if e.get("state") != "completed" and (dt.timestamp() > now or status):
+                live = status is not None
+                c.itemconfigure(self.next_tag, text=("● LIVE NOW" if status == "live" else "● LIVE NOW?") if live
+                                else "NEXT MATCH", fill=(RED if status == "live" else "#B05050") if live else DIM)
                 c.itemconfigure(self.next_match, text=f"{e['a']}   vs   {e['b']}")
                 when = dt.strftime("%a %b ") + str(dt.day) + dt.strftime(", %I:%M %p").replace(" 0", " ")
                 if not live:
@@ -643,6 +696,8 @@ class App:
         if time.time() - getattr(self, "last_fetch", 0) > 600:  # new pairings/results while the app stays open
             self.last_fetch = time.time()
             threading.Thread(target=self.refresh_schedule, daemon=True).start()
+        if time.time() - self.last_live > 60:
+            threading.Thread(target=self.refresh_live, daemon=True).start()
         self.root.after(30000, self.tick)
 
     # ---- UI helpers ----
@@ -653,9 +708,35 @@ class App:
     def apply_top(self):
         self.root.attributes("-topmost", self.top.get())
 
-    @staticmethod
-    def channel_labels():
-        return [AUTO_LABEL] + [f"{label}  ({login})" for label, login in all_channels()]
+    def channel_labels(self):
+        return [AUTO_LABEL] + [("\u25CF " if login in self.live else "    ") + f"{label}  ({login})"
+                              for label, login in all_channels()]
+
+    def refresh_live(self, wait=False):
+        got = live_channels([l for _, l in all_channels()])
+        if got is not None:
+            self.live = got
+            self.last_live = time.time()
+        if not wait:
+            self.root.after(0, self.show_live_dot)
+
+    def show_live_dot(self):
+        """Glowing green circle beside STREAM when the chosen channel (or, for Auto, any official one) is live."""
+        login = channel_login(self.channel.get())
+        on = bool(self.live) if login == "auto" else login in self.live
+        self.live_cv.itemconfigure(self.live_item, image=self.glow if on else "")
+
+    def open_dropdown(self):
+        self.refresh_live(wait=True)
+        labels = self.channel_labels()
+        self.combo.configure(values=labels)
+        try:  # colour the live rows green in the popup list
+            lb = str(self.combo.tk.call("ttk::combobox::PopdownWindow", self.combo)) + ".f.l"
+            for i, text in enumerate(labels):
+                self.combo.tk.call(lb, "itemconfigure", i, "-foreground", GREEN if text.startswith("\u25CF") else TEXT)
+        except tk.TclError:
+            pass
+        self.show_live_dot()
 
     def test_stream(self):
         """Play whichever similar channel is live right now (same Twitch audio_only path)."""

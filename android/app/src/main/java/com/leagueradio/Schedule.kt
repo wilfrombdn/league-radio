@@ -3,6 +3,7 @@ package com.leagueradio
 import android.content.Context
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Duration
 import java.time.Instant
 import org.json.JSONArray
 import org.json.JSONObject
@@ -13,6 +14,14 @@ data class Match(
     val a: String, val b: String, val aw: Int, val bw: Int,
 ) {
     val done get() = state == "completed"
+
+    /** 0 = not running, 1 = live (API says in progress), 2 = probably live (start time passed, API not updated yet). */
+    fun liveStatus(now: Instant): Int {
+        if (done || start.isAfter(now)) return 0
+        val age = Duration.between(start, now)
+        if (state == "inProgress" && age < Duration.ofHours(12)) return 1
+        return if (age < Duration.ofMinutes(bestOf * 50L + 40)) 2 else 0
+    }
 }
 
 object Schedule {

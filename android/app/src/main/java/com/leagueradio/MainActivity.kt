@@ -11,6 +11,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.widget.ArrayAdapter
+import android.view.ViewGroup
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
@@ -74,6 +77,14 @@ class MainActivity : Activity() {
         override fun run() { showData(); ui.postDelayed(this, 2000) }
     }
     private lateinit var schedList: LinearLayout
+    private lateinit var liveDot: View
+    private val green = Color.parseColor("#22C55E")
+    private val red = Color.parseColor("#FF4D4D")
+    private val redDim = Color.parseColor("#B05050")
+    private var liveNow: Set<String> = emptySet()
+    private val liveTick = object : Runnable {
+        override fun run() { refreshLive(); ui.postDelayed(this, 60_000) }
+    }
 
     private var matches: List<Match> = emptyList()
     private var view = 0 // 0 upcoming, 1 results, 2 all
@@ -108,6 +119,7 @@ class MainActivity : Activity() {
         renderSchedule()
         maybeRefresh()
         ui.post(dataTick)
+        ui.post(liveTick)
     }
 
     override fun onPause() {
@@ -124,6 +136,32 @@ class MainActivity : Activity() {
         if (System.currentTimeMillis() - last < gap * 60_000) return
         p.edit().putLong("lastRefresh", System.currentTimeMillis()).apply()
         io.execute { Schedule.refresh(this)?.let { matches = it; runOnUiThread { renderSchedule() } } }
+    }
+
+    /** Checks which official channels are streaming (one small request) and updates the green dot. */
+    private fun refreshLive() {
+        io.execute {
+            Channels.liveSet(Channels.all(this).map { it.login })?.let { liveNow = it }
+            runOnUiThread { showLiveDot() }
+        }
+    }
+
+    /** Glowing green dot beside the channel box: the chosen channel is live (for Auto: any official one). */
+    private fun showLiveDot() {
+        if (!::liveDot.isInitialized) return
+        val ch = channelBox.text.toString().trim().lowercase(Locale.ROOT).removePrefix("twitch.tv/").trim('/')
+        val on = if (ch.isEmpty() || ch == "auto") liveNow.isNotEmpty() else ch in liveNow
+        liveDot.visibility = if (on) View.VISIBLE else View.INVISIBLE
+    }
+
+    private fun glowDot(): LayerDrawable {
+        val halo = GradientDrawable().apply {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = dp(11).toFloat()
+            colors = intArrayOf(Color.argb(190, 34, 197, 94), Color.argb(0, 34, 197, 94))
+        }
+        val core = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#4ADE80")) }
+        return LayerDrawable(arrayOf(halo, core)).apply { setLayerInset(1, dp(6), dp(6), dp(6), dp(6)) }
     }
 
     private fun fmtBytes(b: Long): String = when {
@@ -201,12 +239,33 @@ class MainActivity : Activity() {
 
     /** Drop-down of official channels in many languages; typing any channel name is still allowed. */
     private fun pickChannel() {
-        io.execute { Channels.discover(this) } // remembers streams Riot lists as live, for next time
+        io.execute {
+            Channels.discover(this) // remembers streams Riot lists as live, for next time
+            Channels.liveSet(Channels.all(this).map { it.login })?.let { liveNow = it }
+            runOnUiThread { showChannelDialog() }
+        }
+    }
+
+    private fun showChannelDialog() {
         val list = Channels.all(this)
-        val labels = (listOf("Auto \u00B7 first live official stream") + list.map { "${it.label}  (${it.login})" }).toTypedArray()
+        val labels = listOf("Auto \u00B7 first live official stream") + list.map { "${it.label}  (${it.login})" }
+        val isLive = listOf(liveNow.isNotEmpty()) + list.map { it.login in liveNow }
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
+            override fun getView(pos: Int, convert: View?, parent: ViewGroup): View {
+                val row = LinearLayout(context).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(16), dp(12), dp(16), dp(12))
+                }
+                row.addView(View(context).apply {
+                    if (isLive[pos]) background = glowDot()
+                }, lp(dp(22), dp(22)).apply { rightMargin = dp(10) })
+                row.addView(tv(labels[pos], 15f, if (isLive[pos]) green else text0, isLive[pos]))
+                return row
+            }
+        }
         android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Choose a stream")
-            .setItems(labels) { _, i -> channelBox.setText(if (i == 0) "auto" else list[i - 1].login) }
+            .setAdapter(adapter) { _, i -> channelBox.setText(if (i == 0) "auto" else list[i - 1].login) }
             .show()
     }
 
@@ -362,6 +421,8 @@ class MainActivity : Activity() {
         p.addView(View(this), lp(-1, 0, 1f))
 
         val crow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        liveDot = View(this).apply { background = glowDot(); visibility = View.INVISIBLE }
+        crow.addView(liveDot, lp(dp(22), dp(22)).apply { rightMargin = dp(4) })
         crow.addView(tv("twitch.tv/", 13f, dim).apply { setPadding(0, 0, dp(10), 0) })
         channelBox = EditText(this).apply {
             setText(getSharedPreferences("prefs", MODE_PRIVATE).getString("channel", "auto").let { if (it == "lolesports") "auto" else it })
@@ -371,6 +432,11 @@ class MainActivity : Activity() {
             setSingleLine()
             background = shape(panel, 10, line, 1)
             setPadding(dp(14), dp(11), dp(14), dp(11))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) = showLiveDot()
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
         }
         crow.addView(channelBox, lp(0, -2, 1f))
         crow.addView(tv("\u25BE", 18f, white, true).apply {
@@ -456,8 +522,9 @@ class MainActivity : Activity() {
         for (m in rows) {
             val z = m.start.atZone(zone)
             val day = z.toLocalDate()
-            val live = !m.done && !m.start.isAfter(now) && m.start.isAfter(now.minusSeconds(3 * 3600))
-            val isNext = !nextShown && !m.done && m.start.isAfter(now.minusSeconds(3 * 3600))
+            val status = m.liveStatus(now)
+            val live = status != 0
+            val isNext = !nextShown && !m.done && (m.start.isAfter(now) || live)
             if (isNext) nextShown = true
             if (day != lastDay) {
                 lastDay = day
@@ -484,9 +551,10 @@ class MainActivity : Activity() {
             row.addView(tv(if (scored) "${m.aw} – ${m.bw}" else "vs", if (scored) 15f else 12f,
                 if (scored) white else faint, scored).apply { gravity = Gravity.CENTER }, lp(dp(58), -2))
             row.addView(tv(m.b, 15f, if (tbd) faint else if (!scored || !aWon) white else dim, !tbd && (!scored || !aWon)), lp(0, -2, 1f))
-            row.addView(tv(if (live) "LIVE" else "Bo${m.bestOf}", 11f, if (live) white else faint, live).apply {
+            row.addView(tv(if (!live) "Bo${m.bestOf}" else if (status == 1) "LIVE" else "LIVE?", 11f,
+                if (!live) faint else if (status == 1) red else redDim, live).apply {
                 gravity = Gravity.END
-            }, lp(dp(38), -2))
+            }, lp(dp(44), -2))
             schedList.addView(row, lp(-1, -2))
         }
         if (rows.any { it.a == "TBD" && it.b == "TBD" }) schedList.addView(
@@ -497,11 +565,12 @@ class MainActivity : Activity() {
         })
 
         // "next match" card on the radio tab: first unfinished match overall
-        val n = matches.firstOrNull { !it.done && it.start.isAfter(now.minusSeconds(3 * 3600)) }
+        val n = matches.firstOrNull { !it.done && (it.start.isAfter(now) || it.liveStatus(now) != 0) }
         if (n != null) {
-            val live = !n.start.isAfter(now)
-            nextTag.text = if (live) "● LIVE NOW" else "NEXT MATCH"
-            nextTag.setTextColor(if (live) white else dim)
+            val st = n.liveStatus(now)
+            val live = st != 0
+            nextTag.text = if (st == 1) "● LIVE NOW" else if (st == 2) "● LIVE NOW?" else "NEXT MATCH"
+            nextTag.setTextColor(if (st == 1) red else if (st == 2) redDim else dim)
             nextTv.text = "${n.a}   vs   ${n.b}"
             val mins = Duration.between(now, n.start).toMinutes()
             val inTxt = when {
