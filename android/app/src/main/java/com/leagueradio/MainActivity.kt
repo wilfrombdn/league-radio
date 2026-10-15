@@ -106,6 +106,7 @@ class MainActivity : Activity() {
         }
         connect()
         matches = Schedule.stored(this)
+        Reminders.rescheduleAll(this, matches)
         renderSchedule()
     }
 
@@ -135,7 +136,7 @@ class MainActivity : Activity() {
         val last = p.getLong("lastRefresh", 0)
         if (System.currentTimeMillis() - last < gap * 60_000) return
         p.edit().putLong("lastRefresh", System.currentTimeMillis()).apply()
-        io.execute { Schedule.refresh(this)?.let { matches = it; runOnUiThread { renderSchedule() } } }
+        io.execute { Schedule.refresh(this)?.let { matches = it; Reminders.rescheduleAll(this, it); runOnUiThread { renderSchedule() } } }
     }
 
     /** Checks which official channels are streaming (one small request) and updates the green dot. */
@@ -550,6 +551,18 @@ class MainActivity : Activity() {
                 if (isNext) background = shape(panel2, 10)
                 setPadding(dp(12), dp(12), dp(12), dp(12))
             }
+            val canRemind = !m.done && !(m.a == "TBD" && m.b == "TBD")
+            if (canRemind) {
+                val on = Reminders.isSelected(this, m.id)
+                row.addView(tv(if (on) "\uD83D\uDD14" else "\uD83D\uDD15", 15f, if (on) white else faint), lp(dp(30), -2))
+                row.setOnClickListener {
+                    val now = Reminders.toggle(this, m)
+                    android.widget.Toast.makeText(this,
+                        if (now) "Reminders on: 1 hour and 5 minutes before ${m.a} vs ${m.b}" else "Reminders off",
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    renderSchedule()
+                }
+            } else row.addView(View(this), lp(dp(30), 1))
             row.addView(tv(z.format(timeFmt), 12f, dim), lp(dp(66), -2))
             val tbd = m.a == "TBD" && m.b == "TBD"
             val scored = m.done && m.aw >= 0
