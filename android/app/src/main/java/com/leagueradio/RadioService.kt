@@ -113,14 +113,15 @@ class RadioService : MediaSessionService() {
         status("Connecting...")
         io.execute {
             try {
-                val url = Twitch.audioUrl(ch)
+                val (real, url) = if (ch == "auto") Channels.firstLive(this@RadioService) ?: throw OfflineException()
+                else ch to Twitch.audioUrl(ch)
                 main.post {
                     if (g != gen) return@post
                     player.setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(
-                        MediaMetadata.Builder().setTitle("League Radio").setArtist("twitch.tv/$ch").build()).build())
+                        MediaMetadata.Builder().setTitle("League Radio").setArtist("twitch.tv/$real").build()).build())
                     player.prepare()
                     player.play()
-                    status("Playing audio: $ch")
+                    status("Playing audio: $real")
                 }
             } catch (e: Exception) {
                 main.post { if (g == gen) retryLater(if (e is OfflineException) "Offline" else "Network error") }

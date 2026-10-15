@@ -7,6 +7,7 @@ Includes a Worlds schedule shown in your local time zone.
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -134,6 +135,81 @@ def find_live_channel():
     with ThreadPoolExecutor(len(TEST_CHANNELS)) as ex:
         flags = list(ex.map(live, TEST_CHANNELS))
     return next((c for c, f in zip(TEST_CHANNELS, flags) if f), None)
+
+
+OFFICIAL = [
+    ("English \u00b7 Riot Games", "riotgames"), ("English \u00b7 LoL Esports", "lolesports"),
+    ("Korean / English \u00b7 LCK", "lck"), ("English \u00b7 LEC", "lec"), ("English \u00b7 LCS", "lcs"),
+    ("English \u00b7 LPL English", "lplenglish"), ("Chinese \u00b7 LPL", "lpl"),
+    ("Chinese (Taiwan) \u00b7 LoL Esports TW", "lolesportstw"), ("Portuguese \u00b7 CBLOL", "cblol"),
+    ("Portuguese \u00b7 Riot Games Brasil", "riotgamesbrasil"), ("Spanish \u00b7 LVP", "lvpes"),
+    ("Spanish \u00b7 Riot Games LATAM", "riotgameslatam"), ("Spanish \u00b7 LoL Esports LA", "lolesportsla"),
+    ("French \u00b7 OTP", "otplol_"), ("Russian \u00b7 Riot Games RU", "riotgamesru"),
+    ("Vietnamese \u00b7 Riot Games VN", "riotgamesvn"), ("Arabic \u00b7 LoL Esports AR", "lolesports_ar"),
+]
+AUTO_LABEL = "Auto \u00b7 first live official stream"
+LIVE_API = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
+CHANNELS = os.path.join(os.path.dirname(HISTORY), "channels.json")
+
+
+def discover_official():
+    """Ask Riot which Twitch streams the live Worlds broadcast uses right now and remember them."""
+    try:
+        data = get(LIVE_API, {"x-api-key": API_KEY})["data"]["schedule"]["events"]
+        found = []
+        for e in data:
+            if (e.get("league") or {}).get("slug") != "worlds":
+                continue
+            for s in e.get("streams") or []:
+                if s.get("provider") == "twitch" and s.get("parameter"):
+                    lang = (s.get("mediaLocale") or {}).get("englishName") or s.get("locale", "")
+                    found.append([f"{lang} \u00b7 official live", s["parameter"].lower()])
+        if found:
+            os.makedirs(os.path.dirname(CHANNELS), exist_ok=True)
+            with open(CHANNELS, "w", encoding="utf-8") as f:
+                json.dump(found, f)
+    except Exception:
+        pass
+
+
+def all_channels():
+    """Discovered official streams first, then the built-in list (label, login)."""
+    seen, out = set(), []
+    for label, login in [tuple(x) for x in load_json(CHANNELS, [])] + OFFICIAL:
+        if login not in seen:
+            seen.add(login)
+            out.append((label, login))
+    return out
+
+
+def first_live():
+    """Probe every official channel in parallel; return (login, url) of the first live one."""
+    from concurrent.futures import ThreadPoolExecutor
+    discover_official()
+    found = [l for _, l in [tuple(x) for x in load_json(CHANNELS, [])]]  # streams Riot lists for live Worlds
+    logins = found or [l for _, l in all_channels()]
+
+    def probe(ch):
+        try:
+            return ch, stream_url(ch)
+        except Exception:
+            return None
+    for group in ([logins, [l for _, l in all_channels()]] if found else [logins]):
+        with ThreadPoolExecutor(len(group)) as ex:
+            hit = next((r for r in ex.map(probe, group) if r), None)
+        if hit:
+            return hit
+    return None
+
+
+def channel_login(text):
+    """Dropdown label or typed name -> twitch login ('auto' means pick the first live official one)."""
+    text = text.strip()
+    if text.startswith("Auto"):
+        return "auto"
+    m = re.search(r"\(([^()]+)\)\s*$", text)
+    login = (m.group(1) if m else text).lower().replace("twitch.tv/", "").strip("/ ")
+    return login or "auto"
 
 
 class Player:
@@ -291,6 +367,17 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.quit)
 
         # images are built once so hover / state changes are instant (no redraw flicker)
+        s = ttk.Style()
+        s.theme_use("clam")
+        s.configure("Dark.TCombobox", fieldbackground=PANEL, background=LINE, foreground=TEXT, arrowcolor=TEXT,
+                    bordercolor=LINE, lightcolor=PANEL, darkcolor=PANEL, insertcolor=TEXT,
+                    selectbackground=PANEL, selectforeground=TEXT)
+        s.map("Dark.TCombobox", fieldbackground=[("readonly", PANEL)], bordercolor=[("focus", WHITE)])
+        root.option_add("*TCombobox*Listbox.background", PANEL)
+        root.option_add("*TCombobox*Listbox.foreground", TEXT)
+        root.option_add("*TCombobox*Listbox.selectBackground", "#3A3A3A")
+        root.option_add("*TCombobox*Listbox.selectForeground", WHITE)
+        root.option_add("*TCombobox*Listbox.font", (FONT, 9))
         self.imgs = {(p, h): play_button_img(112, p, h) for p in (False, True) for h in (False, True)}
         self.imgs_pressed = {p: play_button_img(112, p, True, True) for p in (False, True)}
 
@@ -374,11 +461,18 @@ class App:
 
         foot = tk.Frame(f, bg=BG)
         foot.pack(side="bottom", fill="x", pady=(0, 18))
-        tk.Label(foot, text="twitch.tv/", bg=BG, fg=DIM, font=(FONT, 9)).pack(side="left")
-        self.channel = tk.StringVar(value=cfg.get("channel", "lolesports"))
-        tk.Entry(foot, textvariable=self.channel, width=13, bg=PANEL, fg=TEXT, insertbackground=TEXT,
-                 relief="flat", font=(FONT, 9), highlightthickness=1, highlightbackground=LINE,
-                 highlightcolor=WHITE).pack(side="left", padx=6, ipady=4)
+        saved = cfg.get("channel", AUTO_LABEL)
+        self.channel = tk.StringVar(value=AUTO_LABEL if saved in ("lolesports", "") else saved)
+        r1 = tk.Frame(foot, bg=BG)
+        r1.pack(fill="x", pady=(0, 10))
+        tk.Label(r1, text="STREAM", bg=BG, fg=DIM, font=(FONT, 8, "bold")).pack(side="left", padx=(0, 10))
+        self.combo = ttk.Combobox(r1, textvariable=self.channel, values=self.channel_labels(),
+                                  style="Dark.TCombobox", font=(FONT, 9))
+        self.combo.pack(side="left", fill="x", expand=True, ipady=3)
+        self.combo.configure(postcommand=lambda: self.combo.configure(values=self.channel_labels()))
+        r2 = tk.Frame(foot, bg=BG)
+        r2.pack(fill="x")
+        foot = r2
         test = tk.Label(foot, text="TEST", bg=BG, fg=WHITE, font=(FONT, 8, "bold"), padx=12, pady=4,
                         cursor="hand2", highlightthickness=1, highlightbackground=WHITE)
         test.pack(side="left", padx=2)
@@ -559,6 +653,10 @@ class App:
     def apply_top(self):
         self.root.attributes("-topmost", self.top.get())
 
+    @staticmethod
+    def channel_labels():
+        return [AUTO_LABEL] + [f"{label}  ({login})" for label, login in all_channels()]
+
     def test_stream(self):
         """Play whichever similar channel is live right now (same Twitch audio_only path)."""
         if self.want_play:
@@ -593,17 +691,23 @@ class App:
         self.set_state("stopped", "Stopped")
 
     def worker(self, gen):
-        channel = self.channel.get().strip().lower().replace("twitch.tv/", "").strip("/") or "lolesports"
+        channel = channel_login(self.channel.get())
         ok = lambda: self.want_play and gen == self.gen
         while ok():
             self.set_status("Connecting...", "busy")
             try:
-                url = stream_url(channel)
+                if channel == "auto":
+                    hit = first_live()
+                    if not hit:
+                        raise RuntimeError("offline")
+                    channel_now, url = hit
+                else:
+                    channel_now, url = channel, stream_url(channel)
                 if not self.player:
                     self.player = Player()
                 self.player.set_volume(self.vol.get())
                 self.player.play(url)
-                self.set_status(f"Playing  ·  {channel}", "playing")
+                self.set_status(f"Playing  ·  {channel_now}", "playing")
                 time.sleep(5)
                 while ok() and self.player.alive():
                     time.sleep(2)

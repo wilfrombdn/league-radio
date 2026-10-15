@@ -188,7 +188,7 @@ class MainActivity : Activity() {
             setDot(faint)
         } else {
             val ch = channelBox.text.toString().trim().lowercase(Locale.ROOT)
-                .removePrefix("twitch.tv/").trim('/').ifEmpty { "lolesports" }
+                .removePrefix("twitch.tv/").trim('/').ifEmpty { "auto" }
             getSharedPreferences("prefs", MODE_PRIVATE).edit().putString("channel", ch).apply()
             c.sendCustomCommand(SessionCommand(RadioService.CMD_PLAY, Bundle.EMPTY),
                 Bundle().apply { putString("channel", ch) })
@@ -197,6 +197,17 @@ class MainActivity : Activity() {
             statusTv.text = "Connecting..."
             setDot(dim)
         }
+    }
+
+    /** Drop-down of official channels in many languages; typing any channel name is still allowed. */
+    private fun pickChannel() {
+        io.execute { Channels.discover(this) } // remembers streams Riot lists as live, for next time
+        val list = Channels.all(this)
+        val labels = (listOf("Auto \u00B7 first live official stream") + list.map { "${it.label}  (${it.login})" }).toTypedArray()
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Choose a stream")
+            .setItems(labels) { _, i -> channelBox.setText(if (i == 0) "auto" else list[i - 1].login) }
+            .show()
     }
 
     /** Plays whichever similar channel is live right now, to test the same audio_only pipeline. */
@@ -353,7 +364,7 @@ class MainActivity : Activity() {
         val crow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         crow.addView(tv("twitch.tv/", 13f, dim).apply { setPadding(0, 0, dp(10), 0) })
         channelBox = EditText(this).apply {
-            setText(getSharedPreferences("prefs", MODE_PRIVATE).getString("channel", "lolesports"))
+            setText(getSharedPreferences("prefs", MODE_PRIVATE).getString("channel", "auto").let { if (it == "lolesports") "auto" else it })
             setTextColor(white)
             textSize = 14f
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -362,6 +373,11 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(11), dp(14), dp(11))
         }
         crow.addView(channelBox, lp(0, -2, 1f))
+        crow.addView(tv("\u25BE", 18f, white, true).apply {
+            gravity = Gravity.CENTER
+            background = shape(panel, 10, line, 1)
+            setOnClickListener { pickChannel() }
+        }, lp(dp(46), dp(46)).apply { leftMargin = dp(8) })
         p.addView(crow, lp(-1, -2))
 
         val test = tv("TEST WITH A LIVE STREAM", 12f, white, true, 0.1f).apply {
