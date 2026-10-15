@@ -1,0 +1,12 @@
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+__pycache__/
+settings.json
+*.spec
+build/
+dist/
+
+/League Radio.apk
+/League Radio.exe
