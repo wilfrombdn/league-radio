@@ -34,7 +34,7 @@ class RadioService : MediaSessionService() {
     private var lastRx = -1L
     /** No sound 20s after starting or rebuffering: fetch a fresh stream instead of waiting forever. */
     private val stallCheck = Runnable {
-        if (channel != null && !player.isPlaying) {
+        if (channel != null && player.playWhenReady && !player.isPlaying) {
             player.stop()
             resolve()
         }

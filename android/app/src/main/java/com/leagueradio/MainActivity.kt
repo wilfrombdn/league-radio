@@ -42,15 +42,16 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
-    // plain black and white
-    private val bg = Color.parseColor("#000000")
+    // near-black with one teal accent
+    private val bg = Color.parseColor("#0B0D10")
     private val white = Color.parseColor("#FFFFFF")
-    private val text0 = Color.parseColor("#EDEDED")
-    private val dim = Color.parseColor("#8C8C8C")
-    private val faint = Color.parseColor("#5C5C5C")
-    private val panel = Color.parseColor("#101010")
-    private val panel2 = Color.parseColor("#202020")
-    private val line = Color.parseColor("#2E2E2E")
+    private val text0 = Color.parseColor("#E8EAED")
+    private val dim = Color.parseColor("#8B919A")
+    private val faint = Color.parseColor("#5A606A")
+    private val panel = Color.parseColor("#14171C")
+    private val panel2 = Color.parseColor("#1C2027")
+    private val line = Color.parseColor("#262B33")
+    private val accent = Color.parseColor("#2DD4BF")
 
     private var controller: MediaController? = null
     private var playing = false
@@ -172,7 +173,7 @@ class MainActivity : Activity() {
     private fun showData() {
         val p = getSharedPreferences("data", MODE_PRIVATE)
         val today = if (p.getString("day", "") == java.time.LocalDate.now().toString()) p.getLong("today", 0) else 0L
-        dataTv.text = "Data  " + fmtBytes(p.getLong("session", 0)) + " this session  \u00B7  " +
+        dataTv.text = "Data used  " + fmtBytes(p.getLong("session", 0)) + " this session  \u00B7  " +
             fmtBytes(today) + " today"
     }
 
@@ -213,7 +214,7 @@ class MainActivity : Activity() {
         busy = !isPlaying && (st.startsWith("Connecting") || st.contains("retrying"))
         playing = isPlaying || busy
         playBtn.playing = playing
-        setDot(if (isPlaying) white else if (busy) dim else faint, hollow = st.contains("retrying"))
+        setDot(if (isPlaying) accent else if (busy) dim else faint, hollow = st.contains("retrying"))
     }
 
     private fun togglePlay() {
@@ -310,7 +311,7 @@ class MainActivity : Activity() {
         setTextColor(color)
         letterSpacing = spacing
         includeFontPadding = false
-        if (bold) setTypeface(typeface, Typeface.BOLD)
+        if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 
     private fun lp(w: Int, h: Int, weight: Float = 0f) = LinearLayout.LayoutParams(w, h, weight)
@@ -346,7 +347,7 @@ class MainActivity : Activity() {
         radioPane.visibility = if (i == 0) View.VISIBLE else View.GONE
         schedPane.visibility = if (i == 1) View.VISIBLE else View.GONE
         tabCells.forEachIndexed { k, t -> t.setTextColor(if (k == i) white else dim) }
-        tabLines.forEachIndexed { k, l -> l.setBackgroundColor(if (k == i) white else line) }
+        tabLines.forEachIndexed { k, l -> l.setBackgroundColor(if (k == i) accent else line) }
     }
 
     // ---- UI ----
@@ -357,13 +358,21 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(20), dp(24), 0)
+        }
+        head.addView(tv("League Radio", 22f, white, true))
+        head.addView(tv("Audio only  \u00B7  low data", 13f, dim).apply { setPadding(0, dp(6), 0, 0) })
+        root.addView(head, lp(-1, -2))
+
         // tab bar: two equal cells side by side; underline colour marks the active one, nothing moves
         val tabs = LinearLayout(this).apply { setPadding(dp(24), dp(8), dp(24), 0) }
         val cells = ArrayList<TextView>()
         val lines = ArrayList<View>()
         listOf("RADIO", "SCHEDULE").forEachIndexed { i, name ->
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            val t = tv(name, 12f, dim, true, 0.15f).apply {
+            val t = tv(name, 12f, dim, true, 0.12f).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, dp(14), 0, dp(12))
                 setOnClickListener { showTab(i) }
@@ -394,74 +403,73 @@ class MainActivity : Activity() {
             setPadding(dp(24), dp(12), dp(24), dp(20))
         }
         p.addView(View(this), lp(-1, 0, 1f))
-        p.addView(tv("LEAGUE RADIO", 26f, white, true, 0.06f))
-        p.addView(tv("Audio-only  ·  low data", 13f, dim).apply { setPadding(0, dp(6), 0, 0) })
 
         playBtn = PlayButton(this).apply { setOnClickListener { togglePlay() } }
-        p.addView(playBtn, lp(dp(132), dp(132)).apply { topMargin = dp(28) })
+        p.addView(playBtn, lp(dp(144), dp(144)))
 
         val srow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         dot = View(this)
-        srow.addView(dot, lp(dp(10), dp(10)).apply { rightMargin = dp(10) })
-        statusTv = tv("Stopped", 14f, text0).apply {
+        srow.addView(dot, lp(dp(8), dp(8)).apply { rightMargin = dp(10) })
+        statusTv = tv("Stopped", 16f, text0, true).apply {
             setSingleLine()
             ellipsize = TextUtils.TruncateAt.END
         }
         srow.addView(statusTv, lp(-2, -2))
-        p.addView(srow, lp(-2, dp(24)).apply { topMargin = dp(18) })
+        p.addView(srow, lp(-2, dp(24)).apply { topMargin = dp(24) })
         setDot(faint)
-        dataTv = tv("", 12f, dim).apply { gravity = Gravity.CENTER }
-        p.addView(dataTv, lp(-2, -2).apply { topMargin = dp(8) })
+        dataTv = tv("", 12f, faint).apply { gravity = Gravity.CENTER }
+        p.addView(dataTv, lp(-2, -2).apply { topMargin = dp(6) })
+
+        p.addView(View(this), lp(-1, 0, 1f))
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             background = shape(panel, 16, line, 1)
-            setPadding(dp(16), dp(18), dp(16), dp(18))
+            setPadding(dp(16), dp(18), dp(16), dp(20))
         }
-        nextTag = tv("NEXT MATCH", 11f, dim, true, 0.15f)
-        nextTv = tv("", 24f, white, true).apply { setPadding(0, dp(10), 0, dp(8)) }
-        nextTime = tv("", 13f, dim)
+        nextTag = tv("NEXT MATCH", 11f, dim, true, 0.12f).apply { gravity = Gravity.CENTER }
+        nextTv = tv("", 22f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(8)) }
+        nextTime = tv("", 13f, dim).apply { gravity = Gravity.CENTER }
         card.addView(nextTag)
         card.addView(nextTv)
         card.addView(nextTime)
-        p.addView(card, lp(-1, -2).apply { topMargin = dp(28) })
+        p.addView(card, lp(-1, -2))
 
-        p.addView(View(this), lp(-1, 0, 1f))
-
-        val crow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        // stream picker: one rounded field - live dot, twitch.tv/ prefix, editable name, chevron opens the list
+        val field = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = shape(panel, 16, line, 1)
+            setPadding(dp(8), 0, 0, 0)
+        }
         liveDot = View(this).apply { background = glowDot(); visibility = View.INVISIBLE }
-        crow.addView(liveDot, lp(dp(22), dp(22)).apply { rightMargin = dp(4) })
-        crow.addView(tv("twitch.tv/", 13f, dim).apply { setPadding(0, 0, dp(10), 0) })
+        field.addView(liveDot, lp(dp(22), dp(22)))
+        field.addView(tv("twitch.tv/", 14f, faint).apply { setPadding(dp(4), 0, 0, 0) })
         channelBox = EditText(this).apply {
             setText(getSharedPreferences("prefs", MODE_PRIVATE).getString("channel", "auto").let { if (it == "lolesports") "auto" else it })
             setTextColor(white)
             textSize = 14f
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setSingleLine()
-            background = shape(panel, 10, line, 1)
-            setPadding(dp(14), dp(11), dp(14), dp(11))
+            background = null
+            setPadding(dp(2), dp(16), dp(8), dp(16))
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun afterTextChanged(s: android.text.Editable?) = showLiveDot()
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             })
         }
-        crow.addView(channelBox, lp(0, -2, 1f))
-        crow.addView(tv("\u25BE", 18f, white, true).apply {
-            gravity = Gravity.CENTER
-            background = shape(panel, 10, line, 1)
-            setOnClickListener { pickChannel() }
-        }, lp(dp(46), dp(46)).apply { leftMargin = dp(8) })
-        p.addView(crow, lp(-1, -2))
+        field.addView(channelBox, lp(0, -2, 1f))
+        field.addView(View(this).apply { setBackgroundColor(line) }, lp(dp(1), dp(28)))
+        field.addView(Chevron(this, text0).apply { setOnClickListener { pickChannel() } }, lp(dp(52), dp(52)))
+        p.addView(field, lp(-1, -2).apply { topMargin = dp(12) })
 
-        val test = tv("TEST WITH A LIVE STREAM", 12f, white, true, 0.1f).apply {
+        val test = tv("Test with any live stream", 13f, dim).apply {
             gravity = Gravity.CENTER
-            background = shape(Color.TRANSPARENT, 10, white, 1)
-            setPadding(0, dp(14), 0, dp(14))
+            setPadding(dp(16), dp(14), dp(16), dp(4))
             setOnClickListener { testStream() }
         }
-        p.addView(test, lp(-1, -2).apply { topMargin = dp(12) })
+        p.addView(test, lp(-2, -2))
         return p
     }
 
@@ -585,7 +593,11 @@ class MainActivity : Activity() {
             val live = st != 0
             nextTag.text = if (st == 1) "● LIVE NOW" else if (st == 2) "● LIVE NOW?" else "NEXT MATCH"
             nextTag.setTextColor(if (st == 1) red else if (st == 2) redDim else dim)
-            nextTv.text = "${n.a}   vs   ${n.b}"
+            nextTv.text = android.text.SpannableString("${n.a}   vs   ${n.b}").apply {
+                val v = n.a.length + 3
+                setSpan(android.text.style.ForegroundColorSpan(faint), v, v + 2, 0)
+                setSpan(android.text.style.RelativeSizeSpan(0.65f), v, v + 2, 0)
+            }
             val mins = Duration.between(now, n.start).toMinutes()
             val inTxt = when {
                 live -> ""
