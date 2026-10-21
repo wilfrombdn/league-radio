@@ -29,8 +29,16 @@ class RadioService : MediaSessionService() {
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var channel: String? = null
+    private var playingName = ""
     private var gen = 0
     private var lastRx = -1L
+    /** No sound 20s after starting or rebuffering: fetch a fresh stream instead of waiting forever. */
+    private val stallCheck = Runnable {
+        if (channel != null && !player.isPlaying) {
+            player.stop()
+            resolve()
+        }
+    }
     private val ticker = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() {
@@ -65,6 +73,17 @@ class RadioService : MediaSessionService() {
             override fun onPlayerError(error: PlaybackException) = retryLater("Stream error")
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) retryLater("Stream ended")
+                if (state == Player.STATE_BUFFERING && channel != null) {
+                    status("Connecting...")
+                    watchStall()
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying && channel != null) {
+                    main.removeCallbacks(stallCheck)
+                    status("Playing audio: $playingName")
+                }
             }
         })
         session = MediaSession.Builder(this, player).setCallback(object : MediaSession.Callback {
@@ -121,7 +140,8 @@ class RadioService : MediaSessionService() {
                         MediaMetadata.Builder().setTitle("League Radio").setArtist("twitch.tv/$real").build()).build())
                     player.prepare()
                     player.play()
-                    status("Playing audio: $real")
+                    playingName = real
+                    watchStall()
                 }
             } catch (e: Exception) {
                 main.post { if (g == gen) retryLater(if (e is OfflineException) "Offline" else "Network error") }
@@ -129,8 +149,14 @@ class RadioService : MediaSessionService() {
         }
     }
 
+    private fun watchStall() {
+        main.removeCallbacks(stallCheck)
+        main.postDelayed(stallCheck, 20_000)
+    }
+
     private fun retryLater(msg: String) {
         if (channel == null) return
+        main.removeCallbacks(stallCheck)
         val g = gen
         status("$msg - retrying in 45s")
         main.postDelayed({ if (g == gen) resolve() }, 45_000)

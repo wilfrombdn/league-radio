@@ -15,13 +15,15 @@ object Twitch {
 
     private const val TOKEN_HASH = "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9"
 
+    // playerType "site" gets a 1080p video preroll ad stitched into the audio_only playlist;
+    // the player locks onto that video track and goes silent when the ad ends. "embed" gets no preroll.
     fun audioUrl(channel: String): String {
         val body = JSONArray().put(JSONObject()
             .put("operationName", "PlaybackAccessToken")
             .put("extensions", JSONObject().put("persistedQuery", JSONObject()
                 .put("version", 1).put("sha256Hash", TOKEN_HASH)))
             .put("variables", JSONObject().put("isLive", true).put("login", channel).put("isVod", false)
-                .put("vodID", "").put("playerType", "site").put("platform", "web")))
+                .put("vodID", "").put("playerType", "embed").put("platform", "web")))
         val gql = http("https://gql.twitch.tv/gql", body.toString())
         val tok = JSONArray(gql).getJSONObject(0).optJSONObject("data")
             ?.optJSONObject("streamPlaybackAccessToken") ?: throw OfflineException()
